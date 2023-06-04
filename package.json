@@ -15,11 +15,20 @@
 		"commands": [
 			{
 				"command": "type-coder.status.enable",
+				"category": "type-coder",
 				"title": "Enable Type-Coder"
 			},
 			{
 				"command": "type-coder.status.disable",
+				"category": "type-coder",
 				"title": "Disable Type-Coder"
+			},
+			{
+				"command": "type-coder.status.show",
+				"category": "type-coder",
+				"enablement": "update_as_this_is_wrong",
+				"title": "Display the code stats",
+				"shortTitle": "Show an info message having the 'cpm' ratio"
 			}
 		]
 	},

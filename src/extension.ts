@@ -16,12 +16,12 @@ let statusUpdaterHandle: NodeJS.Timer | null = null
 
 let statusInactiveAtTime: number | null = null
 let previousActiveRoundsLength = 0
-let latestCharHitsReading = {
+let lastCharHitsReading = {
 	hits: -1,
 	atTime: -1,
 }
 
-let startTime: number | null = null
+let startTime = 0
 let numCharHits = 0
 
 export function activate(context: ExtensionContext) {
@@ -31,6 +31,7 @@ export function activate(context: ExtensionContext) {
 
 			statusCpm = window.createStatusBarItem(StatusBarAlignment.Left, 1000000)
 			context.subscriptions.push(statusCpm)
+			statusCpm.command = "type-coder.status.show"
 
 			disposableTextChanges = workspace.onDidChangeTextDocument(recordTextChanges)
 			context.subscriptions.push(disposableTextChanges)
@@ -43,6 +44,23 @@ export function activate(context: ExtensionContext) {
 	)
 
 	context.subscriptions.push(commands.registerCommand("type-coder.status.disable", disableAll))
+
+	context.subscriptions.push(
+		commands.registerCommand("type-coder.status.show", () => {
+			// The status can be 'inactive' currently, otherwise we can query time
+			const latestReadingTime = statusInactiveAtTime ?? performance.now()
+			const elapsedMins = (latestReadingTime - startTime + previousActiveRoundsLength) / 1000 / 60
+			const charsPerMinSpeed = numCharHits / elapsedMins
+
+			window.showInformationMessage(
+				`${numCharHits} characters typed in ${(elapsedMins * 60).toFixed(4)} seconds`,
+				{
+					modal: true,
+					detail: `Coding at '${charsPerMinSpeed.toFixed(2)} cpm'`,
+				}
+			)
+		})
+	)
 }
 
 function disableAll() {
@@ -58,50 +76,57 @@ function disableAll() {
 
 	statusInactiveAtTime = null
 	previousActiveRoundsLength = 0
-	latestCharHitsReading = {
+	lastCharHitsReading = {
 		hits: -1,
 		atTime: -1,
 	}
 
-	startTime = null
+	startTime = 0
 	numCharHits = 0
 }
 
 function updateStatus() {
 	if (statusCpm === null) return
-
 	const now = performance.now()
 
-	if (latestCharHitsReading.hits !== numCharHits) {
-		if (statusInactiveAtTime !== null) {
-			previousActiveRoundsLength += statusInactiveAtTime - startTime!
-			startTime = now
-			statusInactiveAtTime = null
-		}
-
-		latestCharHitsReading = {
-			hits: numCharHits,
-			atTime: now,
-		}
-	}
-	// Otherwise should be in Inactive state
-	else if (now - latestCharHitsReading.atTime > 5000) {
+	// If there are not new character hits and last reading was taken 5 seconds ago
+	// then the status should be in 'inactive' state
+	if (lastCharHitsReading.hits === numCharHits && now - lastCharHitsReading.atTime > 5000) {
+		// Set the status to 'inactive' once here
 		if (statusInactiveAtTime === null) statusInactiveAtTime = now
 
-		statusCpm.text = `Paused $(stop-circle)`
+		// Status inactivity time would be constant here for when it went inactive
+		const elapsedMins = (statusInactiveAtTime - startTime + previousActiveRoundsLength) / 1000 / 60
+		const charsPerMinSpeed = numCharHits / elapsedMins
+
+		statusCpm.text = `$(stop-circle) ${charsPerMinSpeed.toFixed(2)} cpm`
 		statusCpm.tooltip = "Paused because of inactivity"
-		statusCpm.color = "grey"
 		statusCpm.backgroundColor = new ThemeColor("statusBarItem.warningBackground")
 		statusCpm.show()
 		return
 	}
 
-	const elapsedMins = (now - startTime! + previousActiveRoundsLength) / 1000 / 60
+	// If there are new character hits then register them
+	if (lastCharHitsReading.hits !== numCharHits) {
+		// If currently status is 'inactive' but there was just an update
+		// then activate the status and update the previous rounds store
+		if (statusInactiveAtTime !== null) {
+			previousActiveRoundsLength += statusInactiveAtTime - startTime
+			startTime = now
+			statusInactiveAtTime = null
+		}
+
+		lastCharHitsReading = {
+			hits: numCharHits,
+			atTime: now,
+		}
+	}
+
+	const elapsedMins = (now - startTime + previousActiveRoundsLength) / 1000 / 60
 	const charsPerMinSpeed = numCharHits / elapsedMins
 
-	statusCpm.text = `${charsPerMinSpeed.toFixed(3)} cpm $(star-half)`
+	statusCpm.text = `$(star-half) ${charsPerMinSpeed.toFixed(2)} cpm`
 	statusCpm.tooltip = "Units in 'characters per minute'"
-	statusCpm.color = "white"
 	if (charsPerMinSpeed === 0)
 		statusCpm.backgroundColor = new ThemeColor("statusBarItem.warningBackground")
 	else statusCpm.backgroundColor = undefined
