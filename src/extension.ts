@@ -1,144 +1,32 @@
+/*
+I know the code is a mess here and I am too lazy to clean it up and refactor properly.
+Will come back later maybe with a new version for better code improvements.
+*/
+
 import {
-	Disposable,
 	ExtensionContext,
 	StatusBarAlignment,
-	StatusBarItem,
 	TextDocumentChangeEvent,
 	ThemeColor,
 	commands,
 	window,
 	workspace,
 } from "vscode"
+import { Handles as hd } from "./handles"
+import { RoundsTimer as rt } from "./rounds_timer"
 
-let disposableTextChanges: Disposable | null = null
-let statusCpm: StatusBarItem | null = null
-let statusUpdaterHandle: NodeJS.Timer | null = null
+// Have an additional variable here for tracking if the
+// extension is enabled, to prevent multiple calling
+let isTypeCoderEnabled = false
 
-let statusInactiveAtTime: number | null = null
-let previousActiveRoundsLength = 0
-let lastCharHitsReading = {
-	hits: -1,
-	atTime: -1,
-}
-
-let startTime = 0
-let numCharHits = 0
-
-export function activate(context: ExtensionContext) {
-	context.subscriptions.push(
-		commands.registerCommand("type-coder.status.enable", () => {
-			console.log("Enabling Type Coder")
-
-			statusCpm = window.createStatusBarItem(StatusBarAlignment.Left, 1000000)
-			context.subscriptions.push(statusCpm)
-			statusCpm.command = "type-coder.status.show"
-
-			disposableTextChanges = workspace.onDidChangeTextDocument(recordTextChanges)
-			context.subscriptions.push(disposableTextChanges)
-
-			statusUpdaterHandle = setInterval(updateStatus, 500)
-			startTime = performance.now()
-			recordTextChanges()
-			window.showInformationMessage("Type Coder has been enabled")
-		})
-	)
-
-	context.subscriptions.push(commands.registerCommand("type-coder.status.disable", disableAll))
-
-	context.subscriptions.push(
-		commands.registerCommand("type-coder.status.show", () => {
-			// The status can be 'inactive' currently, otherwise we can query time
-			const latestReadingTime = statusInactiveAtTime ?? performance.now()
-			const elapsedMins = (latestReadingTime - startTime + previousActiveRoundsLength) / 1000 / 60
-			const charsPerMinSpeed = numCharHits / elapsedMins
-
-			window.showInformationMessage(
-				`${numCharHits} characters typed in ${(elapsedMins * 60).toFixed(4)} seconds`,
-				{
-					modal: true,
-					detail: `Coding at '${charsPerMinSpeed.toFixed(2)} cpm'`,
-				}
-			)
-		})
-	)
-}
+const WARNING_BACKGROUND = new ThemeColor("statusBarItem.warningBackground")
 
 function disableAll() {
-	console.log("disableAll called")
-
-	if (statusUpdaterHandle !== null) {
-		clearInterval(statusUpdaterHandle)
-		statusUpdaterHandle = null
-	}
-
-	disposableTextChanges?.dispose()
-	statusCpm?.dispose()
-
-	statusInactiveAtTime = null
-	previousActiveRoundsLength = 0
-	lastCharHitsReading = {
-		hits: -1,
-		atTime: -1,
-	}
-
-	startTime = 0
-	numCharHits = 0
+	hd.clear()
+	rt.clear()
 }
 
-function updateStatus() {
-	if (statusCpm === null) return
-	const now = performance.now()
-
-	// If there are not new character hits and last reading was taken 5 seconds ago
-	// then the status should be in 'inactive' state
-	if (lastCharHitsReading.hits === numCharHits && now - lastCharHitsReading.atTime > 5000) {
-		// Set the status to 'inactive' once here
-		if (statusInactiveAtTime === null) statusInactiveAtTime = now
-
-		// Status inactivity time would be constant here for when it went inactive
-		const elapsedMins = (statusInactiveAtTime - startTime + previousActiveRoundsLength) / 1000 / 60
-		const charsPerMinSpeed = numCharHits / elapsedMins
-
-		statusCpm.text = `$(stop-circle) ${charsPerMinSpeed.toFixed(2)} cpm`
-		statusCpm.tooltip = "Paused because of inactivity"
-		statusCpm.backgroundColor = new ThemeColor("statusBarItem.warningBackground")
-		statusCpm.show()
-		return
-	}
-
-	// If there are new character hits then register them
-	if (lastCharHitsReading.hits !== numCharHits) {
-		// If currently status is 'inactive' but there was just an update
-		// then activate the status and update the previous rounds store
-		if (statusInactiveAtTime !== null) {
-			previousActiveRoundsLength += statusInactiveAtTime - startTime
-			startTime = now
-			statusInactiveAtTime = null
-		}
-
-		lastCharHitsReading = {
-			hits: numCharHits,
-			atTime: now,
-		}
-	}
-
-	const elapsedMins = (now - startTime + previousActiveRoundsLength) / 1000 / 60
-	const charsPerMinSpeed = numCharHits / elapsedMins
-
-	statusCpm.text = `$(star-half) ${charsPerMinSpeed.toFixed(2)} cpm`
-	statusCpm.tooltip = "Units in 'characters per minute'"
-	if (charsPerMinSpeed === 0)
-		statusCpm.backgroundColor = new ThemeColor("statusBarItem.warningBackground")
-	else statusCpm.backgroundColor = undefined
-
-	statusCpm.show()
-}
-
-function recordTextChanges(event?: TextDocumentChangeEvent) {
-	console.log("recordTextChanges called")
-
-	// Might be the first call without a change event
-	if (event === undefined) return
+function recordTextChanges(event: TextDocumentChangeEvent) {
 	// If it is an undo or redo action
 	if (event.reason !== undefined) return
 
@@ -151,16 +39,108 @@ function recordTextChanges(event?: TextDocumentChangeEvent) {
 
 	// If text changes is more than 1 character then
 	// there must have been some copy-paste
-	if (changes.text.length > 1) {
-		console.log("Copy-Pasted")
+	if (changes.text.length > 1) return
+
+	rt.numCharHits += 1
+}
+
+function updateStatus() {
+	if (hd.statusCpm === null) return
+	const now = performance.now()
+
+	// If there are not new character hits and last reading was taken 5 seconds ago
+	// then the status should be in 'inactive' state
+	if (
+		rt.lastCharHitsReading.hits === rt.numCharHits &&
+		now - rt.lastCharHitsReading.atTime > 5000
+	) {
+		// Set the status to 'inactive' once here
+		if (rt.statusInactiveAtTime === null) rt.statusInactiveAtTime = now
+
+		// Status inactivity time would be constant here for when it went inactive
+		const elapsedMins = rt.computeElapsedMins(rt.statusInactiveAtTime)
+		const charsPerMinSpeed = rt.numCharHits / elapsedMins
+
+		hd.statusCpm.text = `$(stop-circle) ${charsPerMinSpeed.toFixed(2)} cpm`
+		hd.statusCpm.tooltip = "Paused because of inactivity"
+		hd.statusCpm.backgroundColor = WARNING_BACKGROUND
+
+		hd.statusCpm.show()
 		return
 	}
 
-	console.log(changes)
-	numCharHits += 1
+	// If there are new character hits then register them
+	if (rt.lastCharHitsReading.hits !== rt.numCharHits) {
+		// If currently status is 'inactive' but there was just an update
+		// then activate the status and update the previous rounds store
+		if (rt.statusInactiveAtTime !== null) {
+			rt.previousActiveRoundsLength += rt.statusInactiveAtTime - rt.startTime
+			rt.startTime = now
+			rt.statusInactiveAtTime = null
+		}
+
+		rt.lastCharHitsReading = {
+			hits: rt.numCharHits,
+			atTime: now,
+		}
+	}
+
+	const elapsedMins = rt.computeElapsedMins(now)
+	const charsPerMinSpeed = rt.numCharHits / elapsedMins
+
+	hd.statusCpm.text = `$(star-half) ${charsPerMinSpeed.toFixed(2)} cpm`
+	hd.statusCpm.tooltip = "Units in 'characters per minute'"
+	hd.statusCpm.backgroundColor = charsPerMinSpeed === 0 ? WARNING_BACKGROUND : undefined
+
+	hd.statusCpm.show()
+}
+
+export function activate(context: ExtensionContext) {
+	context.subscriptions.push(
+		commands.registerCommand("type-coder.status.enable", () => {
+			if (isTypeCoderEnabled) return
+			isTypeCoderEnabled = true
+
+			hd.statusCpm = window.createStatusBarItem(StatusBarAlignment.Left, 1000000)
+			context.subscriptions.push(hd.statusCpm)
+			hd.statusCpm.command = "type-coder.status.show"
+
+			hd.workspaceTextDoc = workspace.onDidChangeTextDocument(recordTextChanges)
+			context.subscriptions.push(hd.workspaceTextDoc)
+
+			hd.statusUpdaterHandle = setInterval(updateStatus, 500)
+			rt.startTime = performance.now()
+			window.showInformationMessage("Type Coder has been enabled")
+		})
+	)
+
+	context.subscriptions.push(
+		commands.registerCommand("type-coder.status.disable", () => {
+			isTypeCoderEnabled = false
+			disableAll()
+		})
+	)
+
+	context.subscriptions.push(
+		commands.registerCommand("type-coder.status.show", () => {
+			// The status can be 'inactive' currently, otherwise we can query time
+			const latestReadingTime = rt.statusInactiveAtTime ?? performance.now()
+			const elapsedMins = rt.computeElapsedMins(latestReadingTime)
+			const charsPerMinSpeed = rt.numCharHits / elapsedMins
+
+			window.showInformationMessage(
+				`${rt.numCharHits} characters typed in ${(elapsedMins * 60).toFixed(4)} seconds`,
+				{
+					modal: true,
+					detail: `Coding at '${charsPerMinSpeed.toFixed(2)} cpm'`,
+				}
+			)
+		})
+	)
 }
 
 export function deactivate() {
+	isTypeCoderEnabled = false
 	disableAll()
 }
 
